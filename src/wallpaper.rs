@@ -5,8 +5,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
-use windows::core::PCWSTR;
-#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     SystemParametersInfoW, SPI_SETDESKWALLPAPER, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE,
 };
@@ -33,7 +31,7 @@ pub fn backup_current() -> Result<(), String> {
     {
         use windows::core::w;
         use windows::Win32::System::Registry::{
-            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ,
+            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_VALUE_TYPE,
         };
 
         unsafe {
@@ -52,7 +50,7 @@ pub fn backup_current() -> Result<(), String> {
 
             let mut buf = [0u16; 512];
             let mut size = (buf.len() * 2) as u32;
-            let mut ty = 0u32;
+            let mut ty = REG_VALUE_TYPE(0);
             let q = RegQueryValueExW(
                 hkey,
                 w!("Wallpaper"),
