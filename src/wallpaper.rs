@@ -1,15 +1,15 @@
 //! Установка и восстановление обоев Windows.
 //! Работает даже на неактивированной Windows.
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::{
-    SystemParametersInfoW, SPI_SETDESKWALLPAPER, SPIF_UPDATEINIFILE, SPIF_SENDCHANGE,
-};
-#[cfg(windows)]
 use windows::core::PCWSTR;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    SystemParametersInfoW, SPI_SETDESKWALLPAPER, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE,
+};
 
 const BACKUP_NAME: &str = "poi_desktop_backup_wallpaper.txt";
 
@@ -26,27 +26,27 @@ fn ensure_dir() {
     }
 }
 
-/// Сохранить текущие обои (путь), чтобы потом вернуть
+/// Сохранить текущие обои
 pub fn backup_current() -> Result<(), String> {
     ensure_dir();
     #[cfg(windows)]
     {
-        // Читаем из реестра текущий путь обоев
-        use windows::Win32::System::Registry::{
-            RegOpenKeyExW, RegQueryValueExW, RegCloseKey, HKEY_CURRENT_USER, KEY_READ,
-        };
         use windows::core::w;
+        use windows::Win32::System::Registry::{
+            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ,
+        };
 
         unsafe {
             let mut hkey = std::mem::zeroed();
-            let status = RegOpenKeyExW(
+            if RegOpenKeyExW(
                 HKEY_CURRENT_USER,
                 w!("Control Panel\\Desktop"),
                 0,
                 KEY_READ,
                 &mut hkey,
-            );
-            if status.is_err() {
+            )
+            .is_err()
+            {
                 return Err("Не удалось открыть реестр".into());
             }
 
@@ -91,7 +91,7 @@ pub fn restore_backup() -> Result<(), String> {
     set_wallpaper(Path::new(old))
 }
 
-/// Установить файл как обои (работает без активации Windows)
+/// Установить файл как обои
 pub fn set_wallpaper(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Файл не найден: {}", path.display()));
@@ -100,7 +100,6 @@ pub fn set_wallpaper(path: &Path) -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        // Сначала бэкапим текущие
         let _ = backup_current();
 
         let wide: Vec<u16> = abs
@@ -110,13 +109,13 @@ pub fn set_wallpaper(path: &Path) -> Result<(), String> {
             .collect();
 
         unsafe {
-            let ok = SystemParametersInfoW(
+            let result = SystemParametersInfoW(
                 SPI_SETDESKWALLPAPER,
                 0,
-                Some(wide.as_ptr() as *mut _),
+                Some(wide.as_ptr() as *mut core::ffi::c_void),
                 SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
             );
-            if ok.is_err() {
+            if result.is_err() {
                 return Err("SystemParametersInfoW failed".into());
             }
         }
@@ -131,7 +130,6 @@ pub fn set_wallpaper(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Путь к папке, куда сохраняем сгенерированные обои
 pub fn output_dir() -> PathBuf {
     let p = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))

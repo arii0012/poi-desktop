@@ -19,7 +19,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "PoiDesktop",
         options,
-        Box::new(|cc| Ok(Box::new(PoiApp::new(cc)))),
+        Box::new(|cc| Box::new(PoiApp::new(cc))),
     )
 }
 
@@ -35,29 +35,17 @@ struct PoiApp {
     rainbow: bool,
     static_mode: bool,
     time: Instant,
-    last_set_path: Option<PathBuf>,
     status: String,
-    // анимация
-    particles: Vec<Particle>,
-}
-
-struct Particle {
-    x: f32,
-    y: f32,
-    vx: f32,
-    vy: f32,
-    life: f32,
 }
 
 impl PoiApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // тёмная тема по умолчанию
         let mut style = (*cc.egui_ctx.style()).clone();
         style.visuals = egui::Visuals::dark();
         cc.egui_ctx.set_style(style);
 
         Self {
-            shape_idx: 15, // планета по умолчанию
+            shape_idx: 15,
             code_variant: 0,
             color: egui::Color32::from_rgb(77, 255, 136),
             bg_color: egui::Color32::from_rgb(8, 10, 18),
@@ -68,9 +56,7 @@ impl PoiApp {
             rainbow: false,
             static_mode: false,
             time: Instant::now(),
-            last_set_path: None,
-            status: "Готов. Выбери фигуру → код-фигуры меняются автоматически.".into(),
-            particles: Vec::new(),
+            status: "Готов. Выбери фигуру — код-фигуры меняются автоматически.".into(),
         }
     }
 
@@ -81,15 +67,12 @@ impl PoiApp {
     fn apply_wallpaper(&mut self) {
         let path = wallpaper::output_dir().join("poi_current.png");
         match self.render_to_file(&path, 1920, 1080) {
-            Ok(()) => {
-                match wallpaper::set_wallpaper(&path) {
-                    Ok(()) => {
-                        self.last_set_path = Some(path);
-                        self.status = "✅ Обои установлены (даже на неактивированной Windows)".into();
-                    }
-                    Err(e) => self.status = format!("Ошибка установки: {e}"),
+            Ok(()) => match wallpaper::set_wallpaper(&path) {
+                Ok(()) => {
+                    self.status = "✅ Обои установлены (работает без активации Windows)".into();
                 }
-            }
+                Err(e) => self.status = format!("Ошибка установки: {e}"),
+            },
             Err(e) => self.status = format!("Ошибка рендера: {e}"),
         }
     }
@@ -102,23 +85,27 @@ impl PoiApp {
     }
 
     fn render_to_file(&self, path: &PathBuf, w: u32, h: u32) -> Result<(), String> {
-        use image::{RgbImage, ImageBuffer, Rgba};
+        use image::{ImageBuffer, Rgba};
 
         let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_pixel(
-            w, h,
-            Rgba([self.bg_color.r(), self.bg_color.g(), self.bg_color.b(), 255]),
+            w,
+            h,
+            Rgba([
+                self.bg_color.r(),
+                self.bg_color.g(),
+                self.bg_color.b(),
+                255,
+            ]),
         );
 
         let mesh = generate_mesh(self.shape_idx, self.code_variant, self.density);
         let cx = w as f32 * 0.5;
         let cy = h as f32 * 0.48;
         let sc = self.scale * (h as f32 * 0.38);
-
         let t = if self.static_mode { 0.0 } else { self.t() };
 
         for (i, p) in mesh.points.iter().enumerate() {
             let d = mesh.depth.get(i).copied().unwrap_or(0.5);
-            // лёгкое вращение / пульс
             let angle = t * 0.4;
             let px = p[0] - 0.5;
             let py = p[1] - 0.5;
@@ -128,14 +115,14 @@ impl PoiApp {
             let x = (cx + rx * sc * 2.0) as i32;
             let y = (cy + ry * sc * 2.0) as i32;
 
-            let mut col = self.color;
+            let mut r = self.color.r();
+            let mut g = self.color.g();
+            let mut b = self.color.b();
             if self.rainbow {
                 let hue = (i as f32 * 0.02 + t * 0.3) % 1.0;
-                col = egui::Color32::from_rgb(
-                    ((hue * 255.0) as u8).wrapping_add(40),
-                    (((hue + 0.33) % 1.0) * 200.0) as u8,
-                    (((hue + 0.66) % 1.0) * 255.0) as u8,
-                );
+                r = ((hue * 255.0) as u8).wrapping_add(40);
+                g = (((hue + 0.33) % 1.0) * 200.0) as u8;
+                b = (((hue + 0.66) % 1.0) * 255.0) as u8;
             }
 
             let alpha = (d * 255.0) as u8;
@@ -148,11 +135,10 @@ impl PoiApp {
                         let yy = y + dy;
                         if xx >= 0 && yy >= 0 && (xx as u32) < w && (yy as u32) < h {
                             let pixel = img.get_pixel_mut(xx as u32, yy as u32);
-                            // простой glow / blend
                             let a = alpha as f32 / 255.0;
-                            pixel.0[0] = ((1.0 - a) * pixel.0[0] as f32 + a * col.r() as f32) as u8;
-                            pixel.0[1] = ((1.0 - a) * pixel.0[1] as f32 + a * col.g() as f32) as u8;
-                            pixel.0[2] = ((1.0 - a) * pixel.0[2] as f32 + a * col.b() as f32) as u8;
+                            pixel.0[0] = ((1.0 - a) * pixel.0[0] as f32 + a * r as f32) as u8;
+                            pixel.0[1] = ((1.0 - a) * pixel.0[1] as f32 + a * g as f32) as u8;
+                            pixel.0[2] = ((1.0 - a) * pixel.0[2] as f32 + a * b as f32) as u8;
                         }
                     }
                 }
@@ -165,12 +151,10 @@ impl PoiApp {
 
 impl eframe::App for PoiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // анимация
         if !self.static_mode {
             ctx.request_repaint();
         }
 
-        // ===== Левая панель — настройки =====
         egui::SidePanel::left("controls")
             .resizable(true)
             .default_width(320.0)
@@ -180,29 +164,26 @@ impl eframe::App for PoiApp {
                 ui.label(egui::RichText::new("Фигуры • Код-варианты • Обои").weak());
                 ui.separator();
 
-                // Фигура
                 ui.label("Фигура");
-                egui::ScrollArea::vertical()
-                    .max_height(160.0)
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            for (i, name) in SHAPE_NAMES.iter().enumerate() {
-                                let selected = self.shape_idx == i;
-                                if ui.selectable_label(selected, *name).clicked() {
-                                    self.shape_idx = i;
-                                    self.code_variant = 0; // сброс варианта при смене фигуры
-                                    self.status = format!("Выбрана: {} → код-фигуры обновлены", name);
-                                }
+                egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, name) in SHAPE_NAMES.iter().enumerate() {
+                            let selected = self.shape_idx == i;
+                            if ui.selectable_label(selected, *name).clicked() {
+                                self.shape_idx = i;
+                                self.code_variant = 0;
+                                self.status = format!("Выбрана: {} → код-фигуры обновлены", name);
                             }
-                        });
+                        }
                     });
+                });
 
                 ui.add_space(6.0);
                 ui.separator();
 
-                // Код-фигуры — МЕНЯЮТСЯ в зависимости от выбранной фигуры
+                // Код-фигуры МЕНЯЮТСЯ при выборе фигуры
                 let variants = code_variants(self.shape_idx);
-                ui.label(format!("Код-фигуры для «{}»", SHAPE_NAMES[self.shape_idx]));
+                ui.label(format!("Код-фигуры для «{}»", SHAPE_NAMES.get(self.shape_idx).unwrap_or(&"?")));
                 ui.horizontal_wrapped(|ui| {
                     for (i, v) in variants.iter().enumerate() {
                         let selected = self.code_variant == i;
@@ -215,7 +196,6 @@ impl eframe::App for PoiApp {
                 ui.add_space(8.0);
                 ui.separator();
 
-                // Цвет
                 ui.horizontal(|ui| {
                     ui.label("Цвет фигуры");
                     ui.color_edit_button_srgba(&mut self.color);
@@ -226,7 +206,7 @@ impl eframe::App for PoiApp {
                 });
                 ui.checkbox(&mut self.rainbow, "Радуга");
                 ui.checkbox(&mut self.glow, "Свечение");
-                ui.checkbox(&mut self.static_mode, "Статичный режим (без анимации)");
+                ui.checkbox(&mut self.static_mode, "Статичный режим");
 
                 ui.add_space(4.0);
                 ui.add(egui::Slider::new(&mut self.speed, 0.2..=3.0).text("Скорость"));
@@ -236,15 +216,20 @@ impl eframe::App for PoiApp {
                 ui.add_space(12.0);
                 ui.separator();
 
-                // Кнопки действий
-                if ui.add(egui::Button::new("✨ Установить обои").min_size([0.0, 36.0])).clicked() {
+                if ui
+                    .add(egui::Button::new("✨ Установить обои").min_size(egui::vec2(0.0, 36.0)))
+                    .clicked()
+                {
                     self.apply_wallpaper();
                 }
                 if ui.button("↩ Вернуть старые обои").clicked() {
                     self.restore();
                 }
                 if ui.button("💾 Сохранить превью в файл").clicked() {
-                    let path = wallpaper::output_dir().join(format!("poi_{}.png", chrono::Local::now().format("%Y%m%d_%H%M%S")));
+                    let path = wallpaper::output_dir().join(format!(
+                        "poi_{}.png",
+                        chrono::Local::now().format("%Y%m%d_%H%M%S")
+                    ));
                     match self.render_to_file(&path, 1920, 1080) {
                         Ok(()) => self.status = format!("Сохранено: {}", path.display()),
                         Err(e) => self.status = format!("Ошибка: {e}"),
@@ -252,16 +237,17 @@ impl eframe::App for PoiApp {
                 }
 
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(&self.status).small().color(egui::Color32::LIGHT_GREEN));
+                ui.label(
+                    egui::RichText::new(&self.status)
+                        .small()
+                        .color(egui::Color32::LIGHT_GREEN),
+                );
             });
 
-        // ===== Центральная область — живой превью =====
         egui::CentralPanel::default().show(ctx, |ui| {
             let avail = ui.available_size();
-            let (rect, _resp) = ui.allocate_exact_size(avail, egui::Sense::hover());
-
+            let (rect, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
             let painter = ui.painter_at(rect);
-            // фон
             painter.rect_filled(rect, 0.0, self.bg_color);
 
             let mesh = generate_mesh(self.shape_idx, self.code_variant, self.density);
@@ -277,7 +263,6 @@ impl eframe::App for PoiApp {
                 let py = p[1] - 0.5;
                 let rx = px * angle.cos() - py * angle.sin();
                 let ry = px * angle.sin() + py * angle.cos();
-
                 let pos = egui::pos2(cx + rx * sc * 2.0, cy + ry * sc * 2.0);
 
                 let mut col = self.color;
@@ -292,16 +277,28 @@ impl eframe::App for PoiApp {
 
                 let radius = 1.8 + d * 3.2;
                 if self.glow {
-                    painter.circle_filled(pos, radius * 2.2, col.linear_multiply(0.25));
+                    let glow_col = egui::Color32::from_rgba_unmultiplied(
+                        col.r(),
+                        col.g(),
+                        col.b(),
+                        60,
+                    );
+                    painter.circle_filled(pos, radius * 2.2, glow_col);
                 }
                 painter.circle_filled(pos, radius, col);
             }
 
-            // подпись
+            let label = format!(
+                "{}  ·  {}",
+                SHAPE_NAMES.get(self.shape_idx).unwrap_or(&"?"),
+                code_variants(self.shape_idx)
+                    .get(self.code_variant)
+                    .unwrap_or(&"")
+            );
             painter.text(
                 rect.left_top() + egui::vec2(12.0, 10.0),
                 egui::Align2::LEFT_TOP,
-                format!("{}  ·  {}", SHAPE_NAMES[self.shape_idx], code_variants(self.shape_idx).get(self.code_variant).unwrap_or(&"")),
+                label,
                 egui::FontId::proportional(16.0),
                 egui::Color32::from_white_alpha(180),
             );
