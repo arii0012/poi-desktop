@@ -291,9 +291,55 @@ use wallpaper::{output_dir, restore_backup, set_wallpaper};
 const NAV: &[&str] = &["Обзор", "Фигуры", "Вид", "Шейдеры", "Виджеты", "Обои"];
 const ANIM: &[&str] = &["Пульс", "Вращение", "Парение", "Волна", "Glow", "Orbit", "Статично"];
 const SHADERS: &[&str] = &[
-    "Нет", "Звёзды", "Plasma", "Matrix", "Aurora", "Ripple", "Neon Fog", "Cyber Grid",
-    "Vaporwave", "Scanlines", "Tunnel", "Ember",
+    "Нет",
+    "Звёзды",
+    "Plasma (GLSL-like)",
+    "FBM Noise",
+    "Domain Warp",
+    "Matrix",
+    "Aurora",
+    "Ripple",
+    "Neon Fog",
+    "Cyber Grid",
+    "Vaporwave",
+    "Scanlines",
+    "Tunnel",
+    "Ember",
+    "Hologram",
+    "Black Hole",
 ];
+
+// --- math like fragment shaders (CPU) ---
+fn hash21(p: [f32; 2]) -> f32 {
+    let mut p3 = [
+        (p[0] * 0.1031).fract(),
+        (p[1] * 0.1031).fract(),
+        (p[0] * 0.1031).fract(),
+    ];
+    let d = p3[0] * (p3[1] + 33.33) + p3[1] * (p3[2] + 33.33) + p3[2] * (p3[0] + 33.33);
+    p3[0] += d; p3[1] += d; p3[2] += d;
+    ((p3[0] + p3[1]) * p3[2]).fract()
+}
+fn noise2(p: [f32; 2]) -> f32 {
+    let i = [p[0].floor(), p[1].floor()];
+    let f = [p[0].fract(), p[1].fract()];
+    let u = [f[0] * f[0] * (3.0 - 2.0 * f[0]), f[1] * f[1] * (3.0 - 2.0 * f[1])];
+    let a = hash21([i[0], i[1]]);
+    let b = hash21([i[0] + 1.0, i[1]]);
+    let c = hash21([i[0], i[1] + 1.0]);
+    let d = hash21([i[0] + 1.0, i[1] + 1.0]);
+    a + (b - a) * u[0] + (c - a) * u[1] * (1.0 - u[0]) + (d - b) * u[1] * u[0]
+}
+fn fbm(mut p: [f32; 2]) -> f32 {
+    let mut v = 0.0;
+    let mut a = 0.5;
+    for _ in 0..5 {
+        v += a * noise2(p);
+        p = [p[0] * 2.02, p[1] * 2.02];
+        a *= 0.5;
+    }
+    v
+}
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -479,14 +525,70 @@ impl App {
 
     fn draw_shader(&self, painter: &egui::Painter, rect: egui::Rect, t: f32) {
         let name = SHADERS.get(self.shader).copied().unwrap_or("Нет");
-        if name == "Нет" { return; }
+        if name == "Нет" {
+            return;
+        }
         let c = self.accent;
+        let c2 = self.color;
 
-        if name == "Звёзды" || name == "Ember" || name == "Tunnel" {
+        // GLSL-like full-field sampling for plasma / fbm / domain warp / fog / vapor
+        let heavy = name.contains("Plasma")
+            || name.contains("FBM")
+            || name.contains("Domain")
+            || name.contains("Fog")
+            || name.contains("Vapor")
+            || name.contains("Hologram");
+        if heavy {
+            let step = if name.contains("FBM") || name.contains("Domain") { 8.0 } else { 10.0 };
+            let mut y = rect.top();
+            while y < rect.bottom() {
+                let mut x = rect.left();
+                while x < rect.right() {
+                    let mut nx = (x - rect.left()) / rect.width();
+                    let mut ny = (y - rect.top()) / rect.height();
+                    // domain warp (classic shader trick)
+                    if name.contains("Domain") {
+                        let w1 = fbm([nx * 3.0 + t * 0.15, ny * 3.0]);
+                        let w2 = fbm([nx * 3.0 - t * 0.1, ny * 3.0 + 2.0]);
+                        nx += (w1 - 0.5) * 0.35;
+                        ny += (w2 - 0.5) * 0.35;
+                    }
+                    let v = if name.contains("FBM") || name.contains("Domain") {
+                        fbm([nx * 4.0 + t * 0.2, ny * 4.0 - t * 0.15])
+                    } else {
+                        // plasma
+                        ((nx * 5.0 + t).sin() + (ny * 6.0 - t * 0.6).cos() + ((nx + ny) * 3.0 + t * 0.5).sin()) * 0.2 + 0.5
+                    };
+                    let (r, g, b) = if name.contains("Vapor") || name.contains("Hologram") {
+                        (
+                            ((v * 255.0) as u8).saturating_add(c.r() / 4),
+                            c2.g(),
+                            (((1.0 - v) * 220.0) as u8).saturating_add(c.b() / 5),
+                        )
+                    } else {
+                        (c.r(), c.g(), c.b())
+                    };
+                    let a = if name.contains("Hologram") {
+                        (v * 70.0) as u8
+                    } else {
+                        (v * 58.0) as u8
+                    };
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(step + 0.5, step + 0.5)),
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+                    );
+                    x += step;
+                }
+                y += step;
+            }
+        }
+
+        if name == "Звёзды" || name == "Ember" || name == "Tunnel" || name == "Black Hole" {
             for s in &self.stars {
-                let y = (s[1] + t * 0.01 * s[2]) % 1.0;
+                let y = (s[1] + t * 0.012 * s[2]) % 1.0;
                 let col = if name == "Ember" {
-                    egui::Color32::from_rgb(255, 160, 60)
+                    egui::Color32::from_rgb(255, 150, 50)
                 } else {
                     egui::Color32::from_gray((140.0 + 100.0 * s[2]) as u8)
                 };
@@ -497,98 +599,145 @@ impl App {
                 );
             }
         }
-        if name == "Plasma" || name == "Neon Fog" || name == "Vaporwave" {
-            let step = 12.0;
-            let mut y = rect.top();
-            while y < rect.bottom() {
-                let mut x = rect.left();
-                while x < rect.right() {
-                    let nx = (x - rect.left()) / rect.width();
-                    let ny = (y - rect.top()) / rect.height();
-                    let v = ((nx * 5.0 + t).sin() + (ny * 6.0 - t * 0.6).cos()) * 0.25 + 0.5;
-                    painter.rect_filled(
-                        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(step, step)),
-                        0.0,
-                        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (v * 55.0) as u8),
-                    );
-                    x += step;
-                }
-                y += step;
-            }
-        }
+
         if name == "Matrix" {
-            let cols = 22;
+            let cols = 24;
             let cw = rect.width() / cols as f32;
             for i in 0..cols {
                 let head = ((t * (0.4 + i as f32 * 0.03) + i as f32 * 0.2) % 1.3) - 0.15;
-                for k in 0..12 {
+                for k in 0..14 {
                     let yy = head - k as f32 * 0.04;
-                    if !(0.0..=1.0).contains(&yy) { continue; }
+                    if !(0.0..=1.0).contains(&yy) {
+                        continue;
+                    }
                     let ch = CODE_CHARS[(i * 3 + k) % CODE_CHARS.len()];
                     painter.text(
                         egui::pos2(rect.left() + i as f32 * cw, rect.top() + yy * rect.height()),
-                        egui::Align2::LEFT_TOP, ch, egui::FontId::monospace(11.0),
-                        egui::Color32::from_rgba_unmultiplied(self.color.r(), self.color.g(), self.color.b(), (160 - k * 10) as u8),
+                        egui::Align2::LEFT_TOP,
+                        ch,
+                        egui::FontId::monospace(11.0),
+                        egui::Color32::from_rgba_unmultiplied(
+                            self.color.r(),
+                            self.color.g(),
+                            self.color.b(),
+                            (170 - k * 9) as u8,
+                        ),
                     );
                 }
             }
         }
+
         if name == "Aurora" {
-            for band in 0..5 {
-                let base = 0.25 + band as f32 * 0.1;
-                for i in 0..40 {
-                    let u = i as f32 / 40.0;
+            for band in 0..6 {
+                let base = 0.22 + band as f32 * 0.09;
+                for i in 0..48 {
+                    let u = i as f32 / 48.0;
                     let x = rect.left() + u * rect.width();
-                    let y = rect.top() + rect.height() * (base + 0.06 * ((u * 8.0 + t + band as f32).sin()));
-                    painter.circle_filled(egui::pos2(x, y), 3.0,
-                        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 35));
+                    let y = rect.top()
+                        + rect.height()
+                            * (base
+                                + 0.07 * ((u * 8.0 + t * 0.9 + band as f32).sin())
+                                + 0.03 * ((u * 14.0 - t).sin()));
+                    painter.circle_filled(
+                        egui::pos2(x, y),
+                        3.5,
+                        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 40),
+                    );
                 }
             }
         }
+
         if name == "Ripple" {
-            for i in 0..12 {
-                let phase = t * 0.55 + i as f32 * 0.4;
-                let rad = (phase % 1.0) * rect.height() * 0.45;
-                let a = ((1.0 - phase % 1.0) * 70.0) as u8;
-                painter.circle_stroke(rect.center(), rad, egui::Stroke::new(2.0_f32,
-                    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)));
+            for i in 0..14 {
+                let phase = t * 0.55 + i as f32 * 0.38;
+                let rad = (phase % 1.0) * rect.height() * 0.48;
+                let a = ((1.0 - phase % 1.0) * 75.0) as u8;
+                painter.circle_stroke(
+                    rect.center(),
+                    rad,
+                    egui::Stroke::new(
+                        2.0_f32,
+                        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a),
+                    ),
+                );
             }
         }
+
         if name == "Cyber Grid" {
-            let step = 36.0;
+            let step = 34.0;
             let mut x = rect.left();
             while x < rect.right() {
-                painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 30)));
+                painter.line_segment(
+                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                    egui::Stroke::new(
+                        1.0_f32,
+                        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 32),
+                    ),
+                );
                 x += step;
             }
             let mut y = rect.top();
             while y < rect.bottom() {
-                painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 30)));
+                painter.line_segment(
+                    [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                    egui::Stroke::new(
+                        1.0_f32,
+                        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 32),
+                    ),
+                );
                 y += step;
             }
         }
+
         if name == "Scanlines" {
             let mut y = rect.top();
             while y < rect.bottom() {
-                painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(45)));
+                painter.line_segment(
+                    [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(50)),
+                );
                 y += 3.0;
             }
         }
+
         if name == "Tunnel" {
             let (cx, cy) = (rect.center().x, rect.center().y);
-            for i in 0..24 {
-                let a = i as f32 / 24.0 * std::f32::consts::TAU + t * 0.2;
-                let len = rect.height() * 0.4 * (0.3 + 0.7 * ((t * 2.0 + i as f32).sin().abs()));
+            for i in 0..28 {
+                let a = i as f32 / 28.0 * std::f32::consts::TAU + t * 0.25;
+                let len = rect.height() * 0.42 * (0.25 + 0.75 * ((t * 2.0 + i as f32).sin().abs()));
                 painter.line_segment(
-                    [egui::pos2(cx, cy), egui::pos2(cx + a.cos() * len, cy + a.sin() * len)],
-                    egui::Stroke::new(1.5_f32, egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 50)),
+                    [
+                        egui::pos2(cx, cy),
+                        egui::pos2(cx + a.cos() * len, cy + a.sin() * len),
+                    ],
+                    egui::Stroke::new(
+                        1.5_f32,
+                        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 55),
+                    ),
                 );
             }
         }
+
+        if name == "Black Hole" {
+            for i in 0..50 {
+                let u = i as f32 / 49.0;
+                let a = u * std::f32::consts::TAU * 3.5 + t;
+                let r = 18.0 + u * rect.height() * 0.38;
+                painter.circle_filled(
+                    egui::pos2(rect.center().x + a.cos() * r, rect.center().y + a.sin() * r * 0.65),
+                    2.2,
+                    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 65),
+                );
+            }
+            painter.circle_filled(rect.center(), 28.0, egui::Color32::from_rgb(0, 0, 0));
+            painter.circle_stroke(
+                rect.center(),
+                32.0,
+                egui::Stroke::new(3.0_f32, egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 100)),
+            );
+        }
     }
+
 }
 
 impl eframe::App for App {
