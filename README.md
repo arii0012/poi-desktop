@@ -1,11 +1,9 @@
-# PoiDesktop 5.0
+# PoiDesktop 5.1
 
-Живые обои в стиле телефонного PoiPaper / CodeWall.
+Живые обои для Windows.
 
-## Запуск (Windows)
+## Запуск
 
-1. Установи Rust: https://rustup.rs
-2. В папке проекта:
 ```
 cargo build --release
 .\target\release\poi-desktop.exe
@@ -15,8 +13,8 @@ cargo build --release
 
 ## Возможности
 
-- Фигуры + код-варианты
-- Пресеты (Сатурн, Сердце, Matrix…)
-- Сцены фона, свечение, анимации
+- Фигуры и варианты
+- Анимации: spin, pulse, float, wave, glow, orbit
+- Сцены фона, свечение
 - Виджеты часы/дата
-- Установка / возврат обоев Windows
+- Установка и возврат обоев
